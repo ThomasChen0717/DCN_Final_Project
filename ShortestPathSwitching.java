@@ -28,7 +28,7 @@ import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.routing.Link;
-
+/**Thomas */
 public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListener, 
 		ILinkDiscoveryListener, IDeviceListener, InterfaceShortestPathSwitching
 {
@@ -118,6 +118,8 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
      */
     private Collection<Link> getLinks()
     { return linkDiscProv.getLinks().keySet(); }
+
+	/**Annabella */
 
     /**
      * Event handler called when a host joins the network.
@@ -262,6 +264,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 	public void linkDiscoveryUpdate(LDUpdate update) 
 	{ this.linkDiscoveryUpdate(Arrays.asList(update)); }
 	
+
+	/**D'angelo */
+
+
 	/**
      * Event handler called when the IP address of a host changes.
      * @param device information about the host
