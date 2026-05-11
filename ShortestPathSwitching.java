@@ -119,7 +119,8 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
     private Collection<Link> getLinks()
     { return linkDiscProv.getLinks().keySet(); }
 
-	/*extra credit: Thomas*/
+	/*extra credit*/
+	/*Thomas */
     private org.openflow.protocol.OFMatch createBroadcastMatch()
 	{
 		org.openflow.protocol.OFMatch match =
@@ -289,6 +290,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return ports;
 	}
 
+	/*Annabella */
 	private void installLoopFreeBroadcastRules()
 	{
 		Map<Long, ArrayList<Short>> allPorts = this.getAllBroadcastPorts();
@@ -393,6 +395,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
     /*end of extra credit */
 
 	/*helper */
+	/*D'angelo */
 		private org.openflow.protocol.OFMatch createHostMatch(Host host)
 	{
 		org.openflow.protocol.OFMatch match =
@@ -603,6 +606,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return parents;
 	}
 
+	/*Thomas */
 	private Short getOutputPort(IOFSwitch sw, IOFSwitch nextSwitch)
 	{
 		for (Link link : this.getLinks())
@@ -621,7 +625,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
 		return null;
 	}
-
+	/*Annabella */
 	private void installRulesForHost(Host destinationHost)
 	{
 		if (destinationHost == null || !destinationHost.isAttachedToSwitch())
@@ -698,7 +702,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 			}
 		}
 	}
-
+	/*Thomas */
 	private void installRulesForAllHosts()
 	{
 		for (Host host : this.getHosts())
@@ -715,7 +719,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 	}
 	/*end of helper */
 
-	/*Thomas */
     /**
      * Event handler called when a host joins the network.
      * @param device information about the host
@@ -737,7 +740,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		}
 	}
 
-	/*Annabella */
 	/**
      * Event handler called when a host is no longer attached to a switch.
      * @param device information about the host
@@ -763,7 +765,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 
-	/*Annabella */
 	/**
      * Event handler called when a host moves within the network.
      * @param device information about the host
@@ -793,7 +794,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 	
-	/*Annabella */
     /**
      * Event handler called when a switch joins the network.
      * @param DPID for the switch
@@ -810,7 +810,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 
-	/*D'angelo */
 	/**
 	 * Event handler called when a switch leaves the network.
 	 * @param DPID for the switch
@@ -827,7 +826,6 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 
-	/*D’angelo */
 	/**
 	 * Event handler called when multiple links go up or down.
 	 * @param updateList information about the change in each link's state
