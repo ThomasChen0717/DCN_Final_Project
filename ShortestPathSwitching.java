@@ -500,7 +500,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 						}
 
 						if (linkSource.getId() == currentSwitch.getId()
-								&& !visited.get(linkDestination))
+							&& !visited.get(linkDestination))
 						{
 							int newDistance = distances.get(currentSwitch) + 1;
 
@@ -508,6 +508,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 							{
 								distances.put(linkDestination, newDistance);
 								parents.put(linkDestination, currentSwitch);
+							}
+						}
+						else if (linkDestination.getId() == currentSwitch.getId()
+						&& !visited.get(linkSource))
+						{
+							int newDistance = distances.get(currentSwitch) + 1;
+
+							if (newDistance < distances.get(linkSource))
+							{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
 							}
 						}
 					}
@@ -536,6 +547,12 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 									&& link.getDst() == nextSwitch.getId())
 							{
 								outputPort = (short) link.getSrcPort();
+								break;
+							}
+							else if (link.getDst() == sw.getId()
+									&& link.getSrc() == nextSwitch.getId())
+							{
+								outputPort = (short) link.getDstPort();
 								break;
 							}
 						}
@@ -734,6 +751,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 							parents.put(linkDestination, currentSwitch);
 						}
 					}
+					else if (linkDestination.getId() == currentSwitch.getId()
+							&& !visited.get(linkSource))
+					{
+						int newDistance = distances.get(currentSwitch) + 1;
+
+						if (newDistance < distances.get(linkSource))
+						{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
+						}
+					}
 				}
 			}
 
@@ -760,6 +788,12 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 								&& link.getDst() == nextSwitch.getId())
 						{
 							outputPort = (short) link.getSrcPort();
+							break;
+						}
+						else if (link.getDst() == sw.getId()
+								&& link.getSrc() == nextSwitch.getId())
+						{
+							outputPort = (short) link.getDstPort();
 							break;
 						}
 					}
@@ -939,6 +973,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 							parents.put(linkDestination, currentSwitch);
 						}
 					}
+					else if (linkDestination.getId() == currentSwitch.getId()
+							&& !visited.get(linkSource))
+					{
+						int newDistance = distances.get(currentSwitch) + 1;
+
+						if (newDistance < distances.get(linkSource))
+						{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
+						}
+					}
 				}
 			}
 
@@ -965,6 +1010,12 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 								&& link.getDst() == nextSwitch.getId())
 						{
 							outputPort = (short) link.getSrcPort();
+							break;
+						}
+						else if (link.getDst() == sw.getId()
+								&& link.getSrc() == nextSwitch.getId())
+						{
+							outputPort = (short) link.getDstPort();
 							break;
 						}
 					}
@@ -1130,6 +1181,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 						{
 							distances.put(linkDestination, newDistance);
 							parents.put(linkDestination, currentSwitch);
+						}
+					}
+					else if (linkDestination.getId() == currentSwitch.getId()
+							&& !visited.get(linkSource))
+					{
+						int newDistance = distances.get(currentSwitch) + 1;
+
+						if (newDistance < distances.get(linkSource))
+						{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
 						}
 					}
 				}
@@ -1323,6 +1385,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 						{
 							distances.put(linkDestination, newDistance);
 							parents.put(linkDestination, currentSwitch);
+						}
+					}
+					else if (linkDestination.getId() == currentSwitch.getId()
+							&& !visited.get(linkSource))
+					{
+						int newDistance = distances.get(currentSwitch) + 1;
+
+						if (newDistance < distances.get(linkSource))
+						{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
 						}
 					}
 				}
@@ -1533,6 +1606,17 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 							parents.put(linkDestination, currentSwitch);
 						}
 					}
+					else if (linkDestination.getId() == currentSwitch.getId()
+							&& !visited.get(linkSource))
+					{
+						int newDistance = distances.get(currentSwitch) + 1;
+
+						if (newDistance < distances.get(linkSource))
+						{
+							distances.put(linkSource, newDistance);
+							parents.put(linkSource, currentSwitch);
+						}
+					}
 				}
 			}
 
@@ -1559,6 +1643,12 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 								&& link.getDst() == nextSwitch.getId())
 						{
 							outputPort = (short) link.getSrcPort();
+							break;
+						}
+						else if (link.getDst() == sw.getId()
+								&& link.getSrc() == nextSwitch.getId())
+						{
+							outputPort = (short) link.getDstPort();
 							break;
 						}
 					}
