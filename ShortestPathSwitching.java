@@ -392,6 +392,329 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
     /*end of extra credit */
 
+	/*helper */
+		private org.openflow.protocol.OFMatch createHostMatch(Host host)
+	{
+		org.openflow.protocol.OFMatch match =
+				new org.openflow.protocol.OFMatch();
+		ArrayList<org.openflow.protocol.OFMatchField> fields =
+				new ArrayList<org.openflow.protocol.OFMatchField>();
+
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
+				net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.ETH_DST,
+				net.floodlightcontroller.packet.Ethernet.toByteArray(
+						host.getMACAddress())));
+
+		match.setMatchFields(fields);
+		return match;
+	}
+
+	private org.openflow.protocol.OFMatch createHostTcpDstMatch(Host host,
+			short tcpDstPort)
+	{
+		org.openflow.protocol.OFMatch match =
+				new org.openflow.protocol.OFMatch();
+		ArrayList<org.openflow.protocol.OFMatchField> fields =
+				new ArrayList<org.openflow.protocol.OFMatchField>();
+
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
+				net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.ETH_DST,
+				net.floodlightcontroller.packet.Ethernet.toByteArray(
+						host.getMACAddress())));
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.IP_PROTO,
+				(byte) 6));
+		fields.add(new org.openflow.protocol.OFMatchField(
+				org.openflow.protocol.OFOXMFieldType.TCP_DST,
+				tcpDstPort));
+
+		match.setMatchFields(fields);
+		return match;
+	}
+
+	private ArrayList<org.openflow.protocol.instruction.OFInstruction>
+			createOutputInstructions(short outputPort)
+	{
+		org.openflow.protocol.action.OFActionOutput output =
+				new org.openflow.protocol.action.OFActionOutput();
+		output.setPort(outputPort);
+
+		ArrayList<org.openflow.protocol.action.OFAction> actions =
+				new ArrayList<org.openflow.protocol.action.OFAction>();
+		actions.add(output);
+
+		ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
+				new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
+		instructions.add(
+				new org.openflow.protocol.instruction.OFInstructionApplyActions(
+						actions));
+
+		return instructions;
+	}
+
+	private void installOutputRule(IOFSwitch sw, short priority,
+			org.openflow.protocol.OFMatch match, short outputPort)
+	{
+		edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
+				sw,
+				this.table,
+				priority,
+				match,
+				this.createOutputInstructions(outputPort),
+				(short) 0,
+				(short) 0);
+	}
+
+	private void removeRulesForHost(Host host)
+	{
+		if (host == null)
+		{
+			return;
+		}
+
+		short[] tcpPorts = new short[] {
+				(short) 80,
+				(short) 443,
+				(short) 8080,
+				(short) 8000
+		};
+
+		for (IOFSwitch sw : this.getSwitches().values())
+		{
+			edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
+					sw, this.table, this.createHostMatch(host));
+
+			for (short tcpPort : tcpPorts)
+			{
+				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
+						sw, this.table,
+						this.createHostTcpDstMatch(host, tcpPort));
+			}
+		}
+	}
+
+	private void removeAllHostRules()
+	{
+		for (Host host : this.getHosts())
+		{
+			this.removeRulesForHost(host);
+		}
+	}
+
+	private Map<IOFSwitch, ArrayList<IOFSwitch>> computeParents(
+			IOFSwitch destinationSwitch)
+	{
+		Map<IOFSwitch, Integer> distances =
+				new HashMap<IOFSwitch, Integer>();
+		Map<IOFSwitch, ArrayList<IOFSwitch>> parents =
+				new HashMap<IOFSwitch, ArrayList<IOFSwitch>>();
+		Map<IOFSwitch, Boolean> visited =
+				new HashMap<IOFSwitch, Boolean>();
+
+		for (IOFSwitch sw : this.getSwitches().values())
+		{
+			distances.put(sw, Integer.MAX_VALUE);
+			parents.put(sw, new ArrayList<IOFSwitch>());
+			visited.put(sw, false);
+		}
+
+		distances.put(destinationSwitch, 0);
+
+		while (true)
+		{
+			IOFSwitch currentSwitch = null;
+			int currentDistance = Integer.MAX_VALUE;
+
+			for (IOFSwitch sw : distances.keySet())
+			{
+				if (!visited.get(sw) && distances.get(sw) < currentDistance)
+				{
+					currentSwitch = sw;
+					currentDistance = distances.get(sw);
+				}
+			}
+
+			if (currentSwitch == null)
+			{
+				break;
+			}
+
+			visited.put(currentSwitch, true);
+
+			for (Link link : this.getLinks())
+			{
+				IOFSwitch linkSource =
+						this.getSwitches().get(link.getSrc());
+				IOFSwitch linkDestination =
+						this.getSwitches().get(link.getDst());
+
+				if (linkSource == null || linkDestination == null)
+				{
+					continue;
+				}
+
+				if (linkSource.getId() == currentSwitch.getId()
+						&& !visited.get(linkDestination))
+				{
+					int newDistance = distances.get(currentSwitch) + 1;
+
+					if (newDistance < distances.get(linkDestination))
+					{
+						distances.put(linkDestination, newDistance);
+						parents.get(linkDestination).clear();
+						parents.get(linkDestination).add(currentSwitch);
+					}
+					else if (newDistance == distances.get(linkDestination))
+					{
+						if (!parents.get(linkDestination).contains(currentSwitch))
+						{
+							parents.get(linkDestination).add(currentSwitch);
+						}
+					}
+				}
+				else if (linkDestination.getId() == currentSwitch.getId()
+						&& !visited.get(linkSource))
+				{
+					int newDistance = distances.get(currentSwitch) + 1;
+
+					if (newDistance < distances.get(linkSource))
+					{
+						distances.put(linkSource, newDistance);
+						parents.get(linkSource).clear();
+						parents.get(linkSource).add(currentSwitch);
+					}
+					else if (newDistance == distances.get(linkSource))
+					{
+						if (!parents.get(linkSource).contains(currentSwitch))
+						{
+							parents.get(linkSource).add(currentSwitch);
+						}
+					}
+				}
+			}
+		}
+
+		return parents;
+	}
+
+	private Short getOutputPort(IOFSwitch sw, IOFSwitch nextSwitch)
+	{
+		for (Link link : this.getLinks())
+		{
+			if (link.getSrc() == sw.getId()
+					&& link.getDst() == nextSwitch.getId())
+			{
+				return (short) link.getSrcPort();
+			}
+			else if (link.getDst() == sw.getId()
+					&& link.getSrc() == nextSwitch.getId())
+			{
+				return (short) link.getDstPort();
+			}
+		}
+
+		return null;
+	}
+
+	private void installRulesForHost(Host destinationHost)
+	{
+		if (destinationHost == null || !destinationHost.isAttachedToSwitch())
+		{
+			return;
+		}
+
+		IOFSwitch destinationSwitch = destinationHost.getSwitch();
+
+		if (destinationSwitch == null)
+		{
+			return;
+		}
+
+		Map<IOFSwitch, ArrayList<IOFSwitch>> parents =
+				this.computeParents(destinationSwitch);
+
+		short[] tcpPorts = new short[] {
+				(short) 80,
+				(short) 443,
+				(short) 8080,
+				(short) 8000
+		};
+
+		for (IOFSwitch sw : this.getSwitches().values())
+		{
+			if (sw.getId() == destinationSwitch.getId())
+			{
+				this.installOutputRule(
+						sw,
+						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
+						this.createHostMatch(destinationHost),
+						destinationHost.getPort().shortValue());
+				continue;
+			}
+
+			ArrayList<IOFSwitch> nextSwitches = parents.get(sw);
+
+			if (nextSwitches == null || nextSwitches.isEmpty())
+			{
+				continue;
+			}
+
+			IOFSwitch firstNextSwitch = nextSwitches.get(0);
+			Short firstOutputPort = this.getOutputPort(sw, firstNextSwitch);
+
+			if (firstOutputPort == null)
+			{
+				continue;
+			}
+
+			this.installOutputRule(
+					sw,
+					edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
+					this.createHostMatch(destinationHost),
+					firstOutputPort.shortValue());
+
+			for (int i = 0; i < nextSwitches.size() && i < tcpPorts.length; i++)
+			{
+				IOFSwitch ecmpNextSwitch = nextSwitches.get(i);
+				Short ecmpOutputPort =
+						this.getOutputPort(sw, ecmpNextSwitch);
+
+				if (ecmpOutputPort == null)
+				{
+					continue;
+				}
+
+				this.installOutputRule(
+						sw,
+						(short) (edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY + 1),
+						this.createHostTcpDstMatch(destinationHost, tcpPorts[i]),
+						ecmpOutputPort.shortValue());
+			}
+		}
+	}
+
+	private void installRulesForAllHosts()
+	{
+		for (Host host : this.getHosts())
+		{
+			this.installRulesForHost(host);
+		}
+	}
+
+	private void recomputeAllRoutes()
+	{
+		this.removeAllHostRules();
+		this.installRulesForAllHosts();
+		this.installLoopFreeBroadcastRules();
+	}
+	/*end of helper */
+
 	/*Thomas */
     /**
      * Event handler called when a host joins the network.
@@ -409,200 +732,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 			
 			/*****************************************************************/
 			/* TODO: Update routing: add rules to route to new host          */
-			for (Host oldHost : this.getHosts())
-			{
-				if (oldHost == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch removeMatch =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				removeFields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				removeFields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								oldHost.getMACAddress())));
-
-				removeMatch.setMatchFields(removeFields);
-
-				for (IOFSwitch sw : this.getSwitches().values())
-				{
-					edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-							sw, this.table, removeMatch);
-				}
-			}
-
-			for (Host destinationHost : this.getHosts())
-			{
-				if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-				{
-					continue;
-				}
-
-				IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-				if (destinationSwitch == null)
-				{
-					continue;
-				}
-
-				Map<IOFSwitch, Integer> distances =
-						new HashMap<IOFSwitch, Integer>();
-				Map<IOFSwitch, IOFSwitch> parents =
-						new HashMap<IOFSwitch, IOFSwitch>();
-				Map<IOFSwitch, Boolean> visited =
-						new HashMap<IOFSwitch, Boolean>();
-
-				for (IOFSwitch sw : this.getSwitches().values())
-				{
-					distances.put(sw, Integer.MAX_VALUE);
-					parents.put(sw, null);
-					visited.put(sw, false);
-				}
-
-				distances.put(destinationSwitch, 0);
-
-				while (true)
-				{
-					IOFSwitch currentSwitch = null;
-					int currentDistance = Integer.MAX_VALUE;
-
-					for (IOFSwitch sw : distances.keySet())
-					{
-						if (!visited.get(sw) && distances.get(sw) < currentDistance)
-						{
-							currentSwitch = sw;
-							currentDistance = distances.get(sw);
-						}
-					}
-
-					if (currentSwitch == null)
-					{
-						break;
-					}
-
-					visited.put(currentSwitch, true);
-
-					for (Link link : this.getLinks())
-					{
-						IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-						IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-						if (linkSource == null || linkDestination == null)
-						{
-							continue;
-						}
-
-						if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-						{
-							int newDistance = distances.get(currentSwitch) + 1;
-
-							if (newDistance < distances.get(linkDestination))
-							{
-								distances.put(linkDestination, newDistance);
-								parents.put(linkDestination, currentSwitch);
-							}
-						}
-						else if (linkDestination.getId() == currentSwitch.getId()
-						&& !visited.get(linkSource))
-						{
-							int newDistance = distances.get(currentSwitch) + 1;
-
-							if (newDistance < distances.get(linkSource))
-							{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-							}
-						}
-					}
-				}
-
-				for (IOFSwitch sw : this.getSwitches().values())
-				{
-					Short outputPort = null;
-
-					if (sw.getId() == destinationSwitch.getId())
-					{
-						outputPort = destinationHost.getPort().shortValue();
-					}
-					else
-					{
-						IOFSwitch nextSwitch = parents.get(sw);
-
-						if (nextSwitch == null)
-						{
-							continue;
-						}
-
-						for (Link link : this.getLinks())
-						{
-							if (link.getSrc() == sw.getId()
-									&& link.getDst() == nextSwitch.getId())
-							{
-								outputPort = (short) link.getSrcPort();
-								break;
-							}
-							else if (link.getDst() == sw.getId()
-									&& link.getSrc() == nextSwitch.getId())
-							{
-								outputPort = (short) link.getDstPort();
-								break;
-							}
-						}
-					}
-
-					if (outputPort == null)
-					{
-						continue;
-					}
-
-					org.openflow.protocol.OFMatch match =
-							new org.openflow.protocol.OFMatch();
-					ArrayList<org.openflow.protocol.OFMatchField> fields =
-							new ArrayList<org.openflow.protocol.OFMatchField>();
-
-					fields.add(new org.openflow.protocol.OFMatchField(
-							org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-							net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-					fields.add(new org.openflow.protocol.OFMatchField(
-							org.openflow.protocol.OFOXMFieldType.ETH_DST,
-							net.floodlightcontroller.packet.Ethernet.toByteArray(
-									destinationHost.getMACAddress())));
-
-					match.setMatchFields(fields);
-
-					org.openflow.protocol.action.OFActionOutput output =
-							new org.openflow.protocol.action.OFActionOutput();
-					output.setPort(outputPort);
-
-					ArrayList<org.openflow.protocol.action.OFAction> actions =
-							new ArrayList<org.openflow.protocol.action.OFAction>();
-					actions.add(output);
-
-					ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-							new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-					instructions.add(
-							new org.openflow.protocol.instruction.OFInstructionApplyActions(
-									actions));
-
-					edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-							sw,
-							this.table,
-							edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-							match,
-							instructions,
-                            (short) 0,
-		                    (short) 0);
-				}
-			}
-            this.installLoopFreeBroadcastRules();
+			this.recomputeAllRoutes();
 			/*****************************************************************/
 		}
 	}
@@ -627,223 +757,9 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		
 		/*********************************************************************/
 		/* TODO: Update routing: remove rules to route to host               */
-		org.openflow.protocol.OFMatch removeMatch =
-				new org.openflow.protocol.OFMatch();
-		ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-				new ArrayList<org.openflow.protocol.OFMatchField>();
-
-		removeFields.add(new org.openflow.protocol.OFMatchField(
-				org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-				net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-		removeFields.add(new org.openflow.protocol.OFMatchField(
-				org.openflow.protocol.OFOXMFieldType.ETH_DST,
-				net.floodlightcontroller.packet.Ethernet.toByteArray(
-						host.getMACAddress())));
-
-		removeMatch.setMatchFields(removeFields);
-
-		for (IOFSwitch sw : this.getSwitches().values())
-		{
-			edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-					sw, this.table, removeMatch);
-		}
-
+		this.removeRulesForHost(host);
 		this.knownHosts.remove(device);
-
-		for (Host oldHost : this.getHosts())
-		{
-			if (oldHost == null)
-			{
-				continue;
-			}
-
-			org.openflow.protocol.OFMatch oldMatch =
-					new org.openflow.protocol.OFMatch();
-			ArrayList<org.openflow.protocol.OFMatchField> oldFields =
-					new ArrayList<org.openflow.protocol.OFMatchField>();
-
-			oldFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-					net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-			oldFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_DST,
-					net.floodlightcontroller.packet.Ethernet.toByteArray(
-							oldHost.getMACAddress())));
-
-			oldMatch.setMatchFields(oldFields);
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-						sw, this.table, oldMatch);
-			}
-		}
-
-		for (Host destinationHost : this.getHosts())
-		{
-			if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-			{
-				continue;
-			}
-
-			IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-			if (destinationSwitch == null)
-			{
-				continue;
-			}
-
-			Map<IOFSwitch, Integer> distances =
-					new HashMap<IOFSwitch, Integer>();
-			Map<IOFSwitch, IOFSwitch> parents =
-					new HashMap<IOFSwitch, IOFSwitch>();
-			Map<IOFSwitch, Boolean> visited =
-					new HashMap<IOFSwitch, Boolean>();
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				distances.put(sw, Integer.MAX_VALUE);
-				parents.put(sw, null);
-				visited.put(sw, false);
-			}
-
-			distances.put(destinationSwitch, 0);
-
-			while (true)
-			{
-				IOFSwitch currentSwitch = null;
-				int currentDistance = Integer.MAX_VALUE;
-
-				for (IOFSwitch sw : distances.keySet())
-				{
-					if (!visited.get(sw) && distances.get(sw) < currentDistance)
-					{
-						currentSwitch = sw;
-						currentDistance = distances.get(sw);
-					}
-				}
-
-				if (currentSwitch == null)
-				{
-					break;
-				}
-
-				visited.put(currentSwitch, true);
-
-				for (Link link : this.getLinks())
-				{
-					IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-					IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-					if (linkSource == null || linkDestination == null)
-					{
-						continue;
-					}
-
-					if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkDestination))
-						{
-							distances.put(linkDestination, newDistance);
-							parents.put(linkDestination, currentSwitch);
-						}
-					}
-					else if (linkDestination.getId() == currentSwitch.getId()
-							&& !visited.get(linkSource))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkSource))
-						{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-						}
-					}
-				}
-			}
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				Short outputPort = null;
-
-				if (sw.getId() == destinationSwitch.getId())
-				{
-					outputPort = destinationHost.getPort().shortValue();
-				}
-				else
-				{
-					IOFSwitch nextSwitch = parents.get(sw);
-
-					if (nextSwitch == null)
-					{
-						continue;
-					}
-
-					for (Link link : this.getLinks())
-					{
-						if (link.getSrc() == sw.getId()
-								&& link.getDst() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getSrcPort();
-							break;
-						}
-						else if (link.getDst() == sw.getId()
-								&& link.getSrc() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getDstPort();
-							break;
-						}
-					}
-				}
-
-				if (outputPort == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch match =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> fields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								destinationHost.getMACAddress())));
-
-				match.setMatchFields(fields);
-
-				org.openflow.protocol.action.OFActionOutput output =
-						new org.openflow.protocol.action.OFActionOutput();
-				output.setPort(outputPort);
-
-				ArrayList<org.openflow.protocol.action.OFAction> actions =
-						new ArrayList<org.openflow.protocol.action.OFAction>();
-				actions.add(output);
-
-				ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-						new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-				instructions.add(
-						new org.openflow.protocol.instruction.OFInstructionApplyActions(
-								actions));
-
-				edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-						sw,
-						this.table,
-						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-						match,
-						instructions,
-                        (short) 0,
-		                (short) 0);
-			}
-		}
-        this.installLoopFreeBroadcastRules();
+		this.recomputeAllRoutes();
 		/*********************************************************************/
 	}
 
@@ -872,200 +788,8 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change rules to route to host               */
-		for (Host oldHost : this.getHosts())
-		{
-			if (oldHost == null)
-			{
-				continue;
-			}
-
-			org.openflow.protocol.OFMatch removeMatch =
-					new org.openflow.protocol.OFMatch();
-			ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-					new ArrayList<org.openflow.protocol.OFMatchField>();
-
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-					net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_DST,
-					net.floodlightcontroller.packet.Ethernet.toByteArray(
-							oldHost.getMACAddress())));
-
-			removeMatch.setMatchFields(removeFields);
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-						sw, this.table, removeMatch);
-			}
-		}
-
-		for (Host destinationHost : this.getHosts())
-		{
-			if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-			{
-				continue;
-			}
-
-			IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-			if (destinationSwitch == null)
-			{
-				continue;
-			}
-
-			Map<IOFSwitch, Integer> distances =
-					new HashMap<IOFSwitch, Integer>();
-			Map<IOFSwitch, IOFSwitch> parents =
-					new HashMap<IOFSwitch, IOFSwitch>();
-			Map<IOFSwitch, Boolean> visited =
-					new HashMap<IOFSwitch, Boolean>();
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				distances.put(sw, Integer.MAX_VALUE);
-				parents.put(sw, null);
-				visited.put(sw, false);
-			}
-
-			distances.put(destinationSwitch, 0);
-
-			while (true)
-			{
-				IOFSwitch currentSwitch = null;
-				int currentDistance = Integer.MAX_VALUE;
-
-				for (IOFSwitch sw : distances.keySet())
-				{
-					if (!visited.get(sw) && distances.get(sw) < currentDistance)
-					{
-						currentSwitch = sw;
-						currentDistance = distances.get(sw);
-					}
-				}
-
-				if (currentSwitch == null)
-				{
-					break;
-				}
-
-				visited.put(currentSwitch, true);
-
-				for (Link link : this.getLinks())
-				{
-					IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-					IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-					if (linkSource == null || linkDestination == null)
-					{
-						continue;
-					}
-
-					if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkDestination))
-						{
-							distances.put(linkDestination, newDistance);
-							parents.put(linkDestination, currentSwitch);
-						}
-					}
-					else if (linkDestination.getId() == currentSwitch.getId()
-							&& !visited.get(linkSource))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkSource))
-						{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-						}
-					}
-				}
-			}
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				Short outputPort = null;
-
-				if (sw.getId() == destinationSwitch.getId())
-				{
-					outputPort = destinationHost.getPort().shortValue();
-				}
-				else
-				{
-					IOFSwitch nextSwitch = parents.get(sw);
-
-					if (nextSwitch == null)
-					{
-						continue;
-					}
-
-					for (Link link : this.getLinks())
-					{
-						if (link.getSrc() == sw.getId()
-								&& link.getDst() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getSrcPort();
-							break;
-						}
-						else if (link.getDst() == sw.getId()
-								&& link.getSrc() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getDstPort();
-							break;
-						}
-					}
-				}
-
-				if (outputPort == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch match =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> fields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								destinationHost.getMACAddress())));
-
-				match.setMatchFields(fields);
-
-				org.openflow.protocol.action.OFActionOutput output =
-						new org.openflow.protocol.action.OFActionOutput();
-				output.setPort(outputPort);
-
-				ArrayList<org.openflow.protocol.action.OFAction> actions =
-						new ArrayList<org.openflow.protocol.action.OFAction>();
-				actions.add(output);
-
-				ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-						new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-				instructions.add(
-						new org.openflow.protocol.instruction.OFInstructionApplyActions(
-								actions));
-
-				edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-						sw,
-						this.table,
-						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-						match,
-						instructions,
-                        (short) 0,
-		                (short) 0);
-			}
-		}
-        this.installLoopFreeBroadcastRules();
+		this.knownHosts.put(device, host);
+		this.recomputeAllRoutes();
 		/*********************************************************************/
 	}
 	
@@ -1082,194 +806,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
-		for (Host oldHost : this.getHosts())
-		{
-			if (oldHost == null)
-			{
-				continue;
-			}
-
-			org.openflow.protocol.OFMatch removeMatch =
-					new org.openflow.protocol.OFMatch();
-			ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-					new ArrayList<org.openflow.protocol.OFMatchField>();
-
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-					net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_DST,
-					net.floodlightcontroller.packet.Ethernet.toByteArray(
-							oldHost.getMACAddress())));
-
-			removeMatch.setMatchFields(removeFields);
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-						sw2, this.table, removeMatch);
-			}
-		}
-
-		for (Host destinationHost : this.getHosts())
-		{
-			if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-			{
-				continue;
-			}
-
-			IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-			if (destinationSwitch == null)
-			{
-				continue;
-			}
-
-			Map<IOFSwitch, Integer> distances =
-					new HashMap<IOFSwitch, Integer>();
-			Map<IOFSwitch, IOFSwitch> parents =
-					new HashMap<IOFSwitch, IOFSwitch>();
-			Map<IOFSwitch, Boolean> visited =
-					new HashMap<IOFSwitch, Boolean>();
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				distances.put(sw2, Integer.MAX_VALUE);
-				parents.put(sw2, null);
-				visited.put(sw2, false);
-			}
-
-			distances.put(destinationSwitch, 0);
-
-			while (true)
-			{
-				IOFSwitch currentSwitch = null;
-				int currentDistance = Integer.MAX_VALUE;
-
-				for (IOFSwitch sw2 : distances.keySet())
-				{
-					if (!visited.get(sw2) && distances.get(sw2) < currentDistance)
-					{
-						currentSwitch = sw2;
-						currentDistance = distances.get(sw2);
-					}
-				}
-
-				if (currentSwitch == null)
-				{
-					break;
-				}
-
-				visited.put(currentSwitch, true);
-
-				for (Link link : this.getLinks())
-				{
-					IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-					IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-					if (linkSource == null || linkDestination == null)
-					{
-						continue;
-					}
-
-					if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkDestination))
-						{
-							distances.put(linkDestination, newDistance);
-							parents.put(linkDestination, currentSwitch);
-						}
-					}
-					else if (linkDestination.getId() == currentSwitch.getId()
-							&& !visited.get(linkSource))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkSource))
-						{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-						}
-					}
-				}
-			}
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				Short outputPort = null;
-
-				if (sw2.getId() == destinationSwitch.getId())
-				{
-					outputPort = destinationHost.getPort().shortValue();
-				}
-				else
-				{
-					IOFSwitch nextSwitch = parents.get(sw2);
-
-					if (nextSwitch == null)
-					{
-						continue;
-					}
-
-					for (Link link : this.getLinks())
-					{
-						if (link.getSrc() == sw2.getId()
-								&& link.getDst() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getSrcPort();
-							break;
-						}
-					}
-				}
-
-				if (outputPort == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch match =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> fields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								destinationHost.getMACAddress())));
-
-				match.setMatchFields(fields);
-
-				org.openflow.protocol.action.OFActionOutput output =
-						new org.openflow.protocol.action.OFActionOutput();
-				output.setPort(outputPort);
-
-				ArrayList<org.openflow.protocol.action.OFAction> actions =
-						new ArrayList<org.openflow.protocol.action.OFAction>();
-				actions.add(output);
-
-				ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-						new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-				instructions.add(
-						new org.openflow.protocol.instruction.OFInstructionApplyActions(
-								actions));
-
-				edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-						sw2,
-						this.table,
-						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-						match,
-						instructions,
-                        (short) 0,
-		                (short) 0);
-			}
-		}
-        this.installLoopFreeBroadcastRules();
+		this.recomputeAllRoutes();
 		/*********************************************************************/
 	}
 
@@ -1286,194 +823,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
-		for (Host oldHost : this.getHosts())
-		{
-			if (oldHost == null)
-			{
-				continue;
-			}
-
-			org.openflow.protocol.OFMatch removeMatch =
-					new org.openflow.protocol.OFMatch();
-			ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-					new ArrayList<org.openflow.protocol.OFMatchField>();
-
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-					net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_DST,
-					net.floodlightcontroller.packet.Ethernet.toByteArray(
-							oldHost.getMACAddress())));
-
-			removeMatch.setMatchFields(removeFields);
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-						sw2, this.table, removeMatch);
-			}
-		}
-
-		for (Host destinationHost : this.getHosts())
-		{
-			if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-			{
-				continue;
-			}
-
-			IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-			if (destinationSwitch == null)
-			{
-				continue;
-			}
-
-			Map<IOFSwitch, Integer> distances =
-					new HashMap<IOFSwitch, Integer>();
-			Map<IOFSwitch, IOFSwitch> parents =
-					new HashMap<IOFSwitch, IOFSwitch>();
-			Map<IOFSwitch, Boolean> visited =
-					new HashMap<IOFSwitch, Boolean>();
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				distances.put(sw2, Integer.MAX_VALUE);
-				parents.put(sw2, null);
-				visited.put(sw2, false);
-			}
-
-			distances.put(destinationSwitch, 0);
-
-			while (true)
-			{
-				IOFSwitch currentSwitch = null;
-				int currentDistance = Integer.MAX_VALUE;
-
-				for (IOFSwitch sw2 : distances.keySet())
-				{
-					if (!visited.get(sw2) && distances.get(sw2) < currentDistance)
-					{
-						currentSwitch = sw2;
-						currentDistance = distances.get(sw2);
-					}
-				}
-
-				if (currentSwitch == null)
-				{
-					break;
-				}
-
-				visited.put(currentSwitch, true);
-
-				for (Link link : this.getLinks())
-				{
-					IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-					IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-					if (linkSource == null || linkDestination == null)
-					{
-						continue;
-					}
-
-					if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkDestination))
-						{
-							distances.put(linkDestination, newDistance);
-							parents.put(linkDestination, currentSwitch);
-						}
-					}
-					else if (linkDestination.getId() == currentSwitch.getId()
-							&& !visited.get(linkSource))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkSource))
-						{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-						}
-					}
-				}
-			}
-
-			for (IOFSwitch sw2 : this.getSwitches().values())
-			{
-				Short outputPort = null;
-
-				if (sw2.getId() == destinationSwitch.getId())
-				{
-					outputPort = destinationHost.getPort().shortValue();
-				}
-				else
-				{
-					IOFSwitch nextSwitch = parents.get(sw2);
-
-					if (nextSwitch == null)
-					{
-						continue;
-					}
-
-					for (Link link : this.getLinks())
-					{
-						if (link.getSrc() == sw2.getId()
-								&& link.getDst() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getSrcPort();
-							break;
-						}
-					}
-				}
-
-				if (outputPort == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch match =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> fields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								destinationHost.getMACAddress())));
-
-				match.setMatchFields(fields);
-
-				org.openflow.protocol.action.OFActionOutput output =
-						new org.openflow.protocol.action.OFActionOutput();
-				output.setPort(outputPort);
-
-				ArrayList<org.openflow.protocol.action.OFAction> actions =
-						new ArrayList<org.openflow.protocol.action.OFAction>();
-				actions.add(output);
-
-				ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-						new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-				instructions.add(
-						new org.openflow.protocol.instruction.OFInstructionApplyActions(
-								actions));
-
-				edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-						sw2,
-						this.table,
-						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-						match,
-						instructions,
-                        (short) 0,
-		                (short) 0);
-			}
-		}
-        this.installLoopFreeBroadcastRules();
+		this.recomputeAllRoutes();
 		/*********************************************************************/
 	}
 
@@ -1505,200 +855,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
-		for (Host oldHost : this.getHosts())
-		{
-			if (oldHost == null)
-			{
-				continue;
-			}
-
-			org.openflow.protocol.OFMatch removeMatch =
-					new org.openflow.protocol.OFMatch();
-			ArrayList<org.openflow.protocol.OFMatchField> removeFields =
-					new ArrayList<org.openflow.protocol.OFMatchField>();
-
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-					net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-			removeFields.add(new org.openflow.protocol.OFMatchField(
-					org.openflow.protocol.OFOXMFieldType.ETH_DST,
-					net.floodlightcontroller.packet.Ethernet.toByteArray(
-							oldHost.getMACAddress())));
-
-			removeMatch.setMatchFields(removeFields);
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				edu.brown.cs.sdn.apps.util.SwitchCommands.removeRules(
-						sw, this.table, removeMatch);
-			}
-		}
-
-		for (Host destinationHost : this.getHosts())
-		{
-			if (destinationHost == null || !destinationHost.isAttachedToSwitch())
-			{
-				continue;
-			}
-
-			IOFSwitch destinationSwitch = destinationHost.getSwitch();
-
-			if (destinationSwitch == null)
-			{
-				continue;
-			}
-
-			Map<IOFSwitch, Integer> distances =
-					new HashMap<IOFSwitch, Integer>();
-			Map<IOFSwitch, IOFSwitch> parents =
-					new HashMap<IOFSwitch, IOFSwitch>();
-			Map<IOFSwitch, Boolean> visited =
-					new HashMap<IOFSwitch, Boolean>();
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				distances.put(sw, Integer.MAX_VALUE);
-				parents.put(sw, null);
-				visited.put(sw, false);
-			}
-
-			distances.put(destinationSwitch, 0);
-
-			while (true)
-			{
-				IOFSwitch currentSwitch = null;
-				int currentDistance = Integer.MAX_VALUE;
-
-				for (IOFSwitch sw : distances.keySet())
-				{
-					if (!visited.get(sw) && distances.get(sw) < currentDistance)
-					{
-						currentSwitch = sw;
-						currentDistance = distances.get(sw);
-					}
-				}
-
-				if (currentSwitch == null)
-				{
-					break;
-				}
-
-				visited.put(currentSwitch, true);
-
-				for (Link link : this.getLinks())
-				{
-					IOFSwitch linkSource = this.getSwitches().get(link.getSrc());
-					IOFSwitch linkDestination = this.getSwitches().get(link.getDst());
-
-					if (linkSource == null || linkDestination == null)
-					{
-						continue;
-					}
-
-					if (linkSource.getId() == currentSwitch.getId()
-							&& !visited.get(linkDestination))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkDestination))
-						{
-							distances.put(linkDestination, newDistance);
-							parents.put(linkDestination, currentSwitch);
-						}
-					}
-					else if (linkDestination.getId() == currentSwitch.getId()
-							&& !visited.get(linkSource))
-					{
-						int newDistance = distances.get(currentSwitch) + 1;
-
-						if (newDistance < distances.get(linkSource))
-						{
-							distances.put(linkSource, newDistance);
-							parents.put(linkSource, currentSwitch);
-						}
-					}
-				}
-			}
-
-			for (IOFSwitch sw : this.getSwitches().values())
-			{
-				Short outputPort = null;
-
-				if (sw.getId() == destinationSwitch.getId())
-				{
-					outputPort = destinationHost.getPort().shortValue();
-				}
-				else
-				{
-					IOFSwitch nextSwitch = parents.get(sw);
-
-					if (nextSwitch == null)
-					{
-						continue;
-					}
-
-					for (Link link : this.getLinks())
-					{
-						if (link.getSrc() == sw.getId()
-								&& link.getDst() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getSrcPort();
-							break;
-						}
-						else if (link.getDst() == sw.getId()
-								&& link.getSrc() == nextSwitch.getId())
-						{
-							outputPort = (short) link.getDstPort();
-							break;
-						}
-					}
-				}
-
-				if (outputPort == null)
-				{
-					continue;
-				}
-
-				org.openflow.protocol.OFMatch match =
-						new org.openflow.protocol.OFMatch();
-				ArrayList<org.openflow.protocol.OFMatchField> fields =
-						new ArrayList<org.openflow.protocol.OFMatchField>();
-
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_TYPE,
-						net.floodlightcontroller.packet.Ethernet.TYPE_IPv4));
-				fields.add(new org.openflow.protocol.OFMatchField(
-						org.openflow.protocol.OFOXMFieldType.ETH_DST,
-						net.floodlightcontroller.packet.Ethernet.toByteArray(
-								destinationHost.getMACAddress())));
-
-				match.setMatchFields(fields);
-
-				org.openflow.protocol.action.OFActionOutput output =
-						new org.openflow.protocol.action.OFActionOutput();
-				output.setPort(outputPort);
-
-				ArrayList<org.openflow.protocol.action.OFAction> actions =
-						new ArrayList<org.openflow.protocol.action.OFAction>();
-				actions.add(output);
-
-				ArrayList<org.openflow.protocol.instruction.OFInstruction> instructions =
-						new ArrayList<org.openflow.protocol.instruction.OFInstruction>();
-				instructions.add(
-						new org.openflow.protocol.instruction.OFInstructionApplyActions(
-								actions));
-
-				edu.brown.cs.sdn.apps.util.SwitchCommands.installRule(
-						sw,
-						this.table,
-						edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY,
-						match,
-						instructions,
-                        (short) 0,
-		                (short) 0);
-			}
-		}
-        this.installLoopFreeBroadcastRules();
+		this.recomputeAllRoutes();
 		/*********************************************************************/
 	}
 
