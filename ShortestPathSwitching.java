@@ -392,7 +392,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
     /*end of extra credit */
 
-	/*Annabella */
+	/*Thomas */
     /**
      * Event handler called when a host joins the network.
      * @param device information about the host
@@ -1018,7 +1018,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 	
-	/*D'angelo */
+	/*Annabella */
     /**
      * Event handler called when a switch joins the network.
      * @param DPID for the switch
