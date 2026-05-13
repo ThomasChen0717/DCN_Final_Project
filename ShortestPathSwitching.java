@@ -47,7 +47,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
     private IDeviceService deviceProv;
     
     // Switch table in which rules should be installed
-    private byte table;
+    public static byte table;
     
     // Map of hosts to devices
     private Map<IDevice,Host> knownHosts;
@@ -121,6 +121,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
 	/*extra credit*/
 	/*Thomas */
+	// This method creates a general broadcast match rule. 
+	// It matches IPv4 packets whose destination MAC address is ff:ff:ff:ff:ff:ff, 
+	// which is the broadcast MAC address. This version does not check the input port, 
+	// so it can be used for a default broadcast rule or for removing old broadcast rules from a switch.
     private org.openflow.protocol.OFMatch createBroadcastMatch()
 	{
 		org.openflow.protocol.OFMatch match =
@@ -139,10 +143,15 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 				}));
 
 		match.setMatchFields(fields);
-
 		return match;
 	}
 
+	// This method creates a more specific broadcast match rule. 
+	// It matches IPv4 broadcast packets with destination MAC address ff:ff:ff:ff:ff:ff,
+	// but it also checks the input port where the packet arrived. 
+	// This is useful for loop-free flooding because the controller can install 
+	// different broadcast rules for different input ports and avoid 
+	// sending the packet back out the same port it came from.
 	private org.openflow.protocol.OFMatch createBroadcastMatch(short inPort)
 	{
 		org.openflow.protocol.OFMatch match =
@@ -168,6 +177,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return match;
 	}
 
+	// This method adds a port to the list of usable ports for a specific switch. 
+	// If the switch does not already exist in the map, it first creates an empty 
+	// list for that switch. It also checks whether the port is already in the 
+	// list so the same port is not added multiple times.
 	private void addPort(Map<Long, ArrayList<Short>> ports, long switchId,
 			short port)
 	{
@@ -182,6 +195,11 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		}
 	}
 
+	// This method collects all ports that could be used for broadcast on each switch. 
+	// It first creates an empty port list for every switch, then adds ports connected
+	// to other switches and ports connected to hosts. This gives the controller a 
+	// complete list of possible broadcast ports before choosing which ones should 
+	// actually be used for loop-free flooding.
 	private Map<Long, ArrayList<Short>> getAllBroadcastPorts()
 	{
 		Map<Long, ArrayList<Short>> ports =
@@ -218,6 +236,12 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return ports;
 	}
 
+	// This method builds a spanning tree over the switch topology and returns 
+	// only the ports that belong to that tree, plus host-facing ports. 
+	// It uses breadth-first search starting from one switch as the root. 
+	// By only allowing broadcast traffic on spanning-tree ports, the controller 
+	// can flood packets through the network without creating broadcast loops 
+	// in topologies such as triangle or someloops.
 	private Map<Long, ArrayList<Short>> getSpanningTreePorts()
 	{
 		Map<Long, ArrayList<Short>> ports =
@@ -291,6 +315,13 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 	}
 
 	/*Annabella */
+	// This method installs the loop-free broadcast rules used for the extra credit. 
+	// It first gets all possible broadcast ports and then gets only the ports that 
+	// belong to the spanning tree. Before installing new broadcast rules, it removes 
+	// old broadcast rules so outdated topology information does not remain in the 
+	// switches. Then, for each switch, it installs broadcast forwarding rules only 
+	// on spanning-tree ports. This allows broadcast packets to reach hosts while 
+	// avoiding loops in topologies with cycles.
 	private void installLoopFreeBroadcastRules()
 	{
 		Map<Long, ArrayList<Short>> allPorts = this.getAllBroadcastPorts();
@@ -396,7 +427,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
 	/*helper */
 	/*D'angelo */
-		private org.openflow.protocol.OFMatch createHostMatch(Host host)
+	// This method creates the normal Part 3 forwarding match for one destination host. 
+	// It matches IPv4 packets whose destination MAC address is the MAC address of the given host. 
+	// These rules are used as the default shortest-path forwarding rules for regular IP traffic.
+	private org.openflow.protocol.OFMatch createHostMatch(Host host)
 	{
 		org.openflow.protocol.OFMatch match =
 				new org.openflow.protocol.OFMatch();
@@ -415,6 +449,11 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return match;
 	}
 
+	// This method creates a more specific ECMP match for TCP traffic going to
+	// one destination host and one TCP destination port. It matches IPv4, the 
+	// destination host MAC address, TCP protocol, and a specific TCP destination 
+	// port such as 80, 443, 8080, or 8000. These higher-priority rules allow 
+	// selected TCP traffic to be split across multiple equal-cost paths.
 	private org.openflow.protocol.OFMatch createHostTcpDstMatch(Host host,
 			short tcpDstPort)
 	{
@@ -441,6 +480,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		return match;
 	}
 
+	// This method creates the OpenFlow instructions needed to forward a packet 
+	// out of one output port. It builds an output action, places that action 
+	// into an action list, then wraps the list inside an ApplyActions instruction 
+	// that can be passed to SwitchCommands.installRule().
 	private ArrayList<org.openflow.protocol.instruction.OFInstruction>
 			createOutputInstructions(short outputPort)
 	{
@@ -460,7 +503,11 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 
 		return instructions;
 	}
-
+	
+	// This helper installs one forwarding rule on one switch. 
+	// It uses the match and priority passed into the method, sends matching 
+	// packets out the given output port, and sets both idle timeout and 
+	// hard timeout to zero so the rule does not expire automatically.
 	private void installOutputRule(IOFSwitch sw, short priority,
 			org.openflow.protocol.OFMatch match, short outputPort)
 	{
@@ -474,6 +521,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 				(short) 0);
 	}
 
+	// This method removes all rules related to one destination host from every switch. 
+	// It removes the normal destination-MAC rule and also removes the ECMP TCP-specific 
+	// rules for the selected TCP ports, so old paths do not stay in the switch tables
+	// after a topology or host-location change.
 	private void removeRulesForHost(Host host)
 	{
 		if (host == null)
@@ -502,6 +553,9 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		}
 	}
 
+	// This method removes all forwarding rules for all currently known hosts. 
+	// It is used before recomputing routes so the controller can clear outdated 
+	// rules and then install fresh shortest-path and ECMP rules based on the current topology.
 	private void removeAllHostRules()
 	{
 		for (Host host : this.getHosts())
@@ -510,6 +564,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		}
 	}
 
+	// This method computes shortest paths from every switch back toward a destination switch. 
+	// It works like Dijkstra with unit link costs and stores multiple parent switches when 
+	// there are equal-cost paths. Because parents maps each switch to an ArrayList of possible 
+	// next hops, this supports ECMP by allowing more than one equal-cost route to the same destination.
 	private Map<IOFSwitch, ArrayList<IOFSwitch>> computeParents(
 			IOFSwitch destinationSwitch)
 	{
@@ -607,25 +665,42 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 	}
 
 	/*Thomas */
+	// This method finds the switch port that should be used to forward traffic 
+	// from the current switch to the selected next-hop switch. It checks both 
+	// directions of each discovered link because the link may appear as src-to-dst 
+	// or dst-to-src. If multiple matching ports exist, it chooses the smallest 
+	// port number to keep the output deterministic.
 	private Short getOutputPort(IOFSwitch sw, IOFSwitch nextSwitch)
 	{
+		Short bestPort = null;
 		for (Link link : this.getLinks())
 		{
+			Short candidate = null;
 			if (link.getSrc() == sw.getId()
 					&& link.getDst() == nextSwitch.getId())
 			{
-				return (short) link.getSrcPort();
+				candidate = (short) link.getSrcPort();
 			}
 			else if (link.getDst() == sw.getId()
 					&& link.getSrc() == nextSwitch.getId())
 			{
-				return (short) link.getDstPort();
+				candidate = (short) link.getDstPort();
+			}
+			if (candidate != null
+					&& (bestPort == null || candidate < bestPort))
+			{
+				bestPort = candidate;
 			}
 		}
-
-		return null;
+		return bestPort;
 	}
+
 	/*Annabella */
+	// This method installs all forwarding rules needed to reach one destination host. 
+	// It first installs a normal destination-MAC rule as the fallback shortest-path rule. 
+	// If multiple equal-cost next hops exist, it also installs higher-priority TCP-specific 
+	// rules for selected destination ports so TCP traffic can be split across equal-cost 
+	// paths for the ECMP extra credit.
 	private void installRulesForHost(Host destinationHost)
 	{
 		if (destinationHost == null || !destinationHost.isAttachedToSwitch())
@@ -694,6 +769,11 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 					continue;
 				}
 
+				if (ecmpOutputPort.equals(firstOutputPort) && i == 0)
+				{
+					continue; 
+				}
+
 				this.installOutputRule(
 						sw,
 						(short) (edu.brown.cs.sdn.apps.util.SwitchCommands.DEFAULT_PRIORITY + 1),
@@ -702,7 +782,9 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 			}
 		}
 	}
-	/*Thomas */
+
+	// This method installs forwarding rules for every known host in the network. 
+	// It simply loops through the host list and calls installRulesForHost() for each one.
 	private void installRulesForAllHosts()
 	{
 		for (Host host : this.getHosts())
@@ -711,6 +793,10 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		}
 	}
 
+	// This method is called whenever the topology or host placement changes. 
+	// It removes old host rules, installs updated shortest-path and ECMP rules 
+	// for all hosts, and then reinstalls loop-free broadcast rules so the 
+	// switch tables match the current network state.
 	private void recomputeAllRoutes()
 	{
 		this.removeAllHostRules();
@@ -810,6 +896,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 
+	/*D'angelo */
 	/**
 	 * Event handler called when a switch leaves the network.
 	 * @param DPID for the switch
@@ -826,6 +913,7 @@ public class ShortestPathSwitching implements IFloodlightModule, IOFSwitchListen
 		/*********************************************************************/
 	}
 
+	/*D’angelo */
 	/**
 	 * Event handler called when multiple links go up or down.
 	 * @param updateList information about the change in each link's state
